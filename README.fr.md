@@ -48,6 +48,10 @@ de quitter ou de désactiver temporairement le mode toujours au-dessus.
   l’échelle courante — y compris le cas historique subtil d’une valeur qui
   tombe exactement sur un entier. Chaque intervalle magenta représente
   toujours exactement une unité de load.
+- Une ligne de largeur double marque chaque multiple du nombre de cœurs
+  logiques : 16, 32, 48, etc. sur le M4 Max à 16 cœurs. La première correspond
+  à une charge moyenne de 1 par cœur, la suivante à 2 par cœur, et ainsi de
+  suite.
 - Chaque mesure occupe exactement un pixel horizontal et chaque colonne du
   graphe est une barre verticale, comme dans `StripChart.c`. L’historique n’est
   jamais étiré pour remplir une fenêtre encore vide. Le défilement est d’un
@@ -91,8 +95,7 @@ Pour rendre ces options permanentes, ajouter les arguments comme éléments
 `<string>...</string>` dans `ProgramArguments` du fichier :
 
 ```text
-~/Library/LaunchAgents/com.page.pyxload.cpu.plist
-~/Library/LaunchAgents/com.page.pyxload.gpu.plist
+~/Library/LaunchAgents/com.page.pyxload.plist
 ```
 
 Puis recharger le LaunchAgent ou fermer et rouvrir la session.

@@ -1,0 +1,33 @@
+#!/bin/bash
+set -euo pipefail
+
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+CACHE="$APP_DIR/.python-path"
+PYTHON=""
+
+if [[ -r "$CACHE" ]]; then
+    IFS= read -r candidate < "$CACHE" || true
+    if [[ -x "$candidate" ]] &&
+       "$candidate" -c 'import tkinter' >/dev/null 2>&1; then
+        PYTHON="$candidate"
+    fi
+fi
+
+if [[ -z "$PYTHON" ]]; then
+    for candidate in /opt/local/bin/python3.15 /opt/local/bin/python3.14 /opt/local/bin/python3.13 /opt/local/bin/python3.12 /opt/local/bin/python3.11 /usr/local/bin/python3 /opt/homebrew/bin/python3 /opt/local/bin/python /usr/bin/python3; do
+        if [[ -x "$candidate" ]] &&
+           "$candidate" -c 'import tkinter' >/dev/null 2>&1; then
+            PYTHON="$candidate"
+            printf '%s\n' "$PYTHON" > "$CACHE"
+            break
+        fi
+    done
+fi
+
+if [[ -z "$PYTHON" ]]; then
+    echo "No Python installation with tkinter was found." >&2
+    exit 1
+fi
+
+exec "$PYTHON" "$@"
+

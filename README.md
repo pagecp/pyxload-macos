@@ -11,12 +11,13 @@ scale intervals, dynamic scaling and `jumpScroll` overflow.
 ## Highlights
 
 - CPU load graph faithful to `xload` and Xaw `StripChart`
-- Apple Silicon GPU utilisation graph, without `sudo`
+- optional Apple Silicon GPU utilisation widget, without `sudo`
 - borderless, square-cornered floating windows
 - no Dock or Command-Tab icon
 - draggable from anywhere in the graph
-- remembers window size and position
-- starts automatically at login using per-user LaunchAgents
+- runs CPU and GPU widgets inside one application
+- remembers each widget's size and position separately for every monitor arrangement
+- starts automatically at login using one per-user LaunchAgent
 - no Python dependencies beyond Tkinter
 - supports the historic X11 Fixed 10×20 Mac conversion, `FixedRegular`
 
@@ -44,7 +45,7 @@ chmod +x install.command uninstall.command
 ```
 
 Installation itself does not require `sudo`. The scripts install PyXLoad in
-`~/Applications/PyXLoad` and create two LaunchAgents in
+`~/Applications/PyXLoad` and create one LaunchAgent in
 `~/Library/LaunchAgents`.
 
 The supplied profile reproduces Christian Pagé's setup on `kamari`:
@@ -56,6 +57,9 @@ The supplied profile reproduces Christian Pagé's setup on `kamari`:
 
 Both use a 3-second update period, black background, white histogram, magenta
 grid and `FixedRegular` at native size 16.
+
+CPU is always present. Use **GPU widget** in either graph's context menu to
+show or hide the second widget; hiding it preserves all saved positions.
 
 ## Controls
 
@@ -88,6 +92,8 @@ PyXLoad reproduces:
 - persistent dynamic scale state, including Xaw's exact-integer edge case
 - scale reduction when the former maximum scrolls out or the chart repaints
 - integer positioning of `scale - 1` reference lines
+- a double-width reference at each logical-core multiple (for example 16, 32,
+  48 on a 16-core Mac), marking one, two, or more runnable tasks per core
 - a label area separate from the chart, so the graph cannot cover its text
 
 Intentional macOS additions are the native floating window, contextual menu,

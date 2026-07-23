@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import ctypes
 import json
 import os
@@ -12,14 +13,53 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 from collections import deque
 from pathlib import Path
 
+from display_profiles import display_signature
+
 
 APP_NAME = "PyXLoad"
 STATE_DIR = Path.home() / "Library" / "Application Support" / APP_NAME
+SETTINGS_FILE = STATE_DIR / "settings.json"
+
+
+def right_mouse_down() -> bool:
+    """Read the physical right-button state even while PyXLoad is inactive."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        quartz = ctypes.cdll.LoadLibrary(
+            "/System/Library/Frameworks/ApplicationServices.framework/"
+            "ApplicationServices")
+        quartz.CGEventSourceButtonState.restype = ctypes.c_bool
+        quartz.CGEventSourceButtonState.argtypes = [ctypes.c_int, ctypes.c_int]
+        return bool(quartz.CGEventSourceButtonState(0, 1))
+    except (OSError, AttributeError, TypeError):
+        return False
+
+
+def activate_macos_app() -> None:
+    if sys.platform != "darwin":
+        return
+    try:
+        objc = ctypes.cdll.LoadLibrary("/usr/lib/libobjc.A.dylib")
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.objc_getClass.argtypes = [ctypes.c_char_p]
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        send_id = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p,
+                                   ctypes.c_void_p)(("objc_msgSend", objc))
+        send_bool = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p,
+                                     ctypes.c_bool)(("objc_msgSend", objc))
+        app = send_id(objc.objc_getClass(b"NSApplication"),
+                      objc.sel_registerName(b"sharedApplication"))
+        send_bool(app, objc.sel_registerName(b"activateIgnoringOtherApps:"), True)
+    except (OSError, AttributeError, TypeError):
+        pass
 
 
 def use_macos_accessory_mode() -> None:
@@ -49,6 +89,56 @@ def use_macos_accessory_mode() -> None:
         send_integer(application, set_policy, 1)
     except (OSError, AttributeError, TypeError):
         # The graph remains usable if a future macOS changes this API.
+        pass
+
+
+def set_native_floating(root: tk.Misc, enabled: bool,
+                        raise_windows: bool = True) -> None:
+    """Set NSWindow level directly; Tk -topmost is unreliable for Toplevels."""
+    if sys.platform != "darwin":
+        return
+    try:
+        if raise_windows:
+            root.lift()
+        root.update_idletasks()
+        objc = ctypes.cdll.LoadLibrary("/usr/lib/libobjc.A.dylib")
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.objc_getClass.argtypes = [ctypes.c_char_p]
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        sel = lambda name: objc.sel_registerName(name.encode("ascii"))
+        send_id = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p,
+                                   ctypes.c_void_p)(("objc_msgSend", objc))
+        send_count = ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p,
+                                      ctypes.c_void_p)(("objc_msgSend", objc))
+        send_index = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p,
+                                      ctypes.c_void_p, ctypes.c_ulong)(
+                                          ("objc_msgSend", objc))
+        send_long = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p,
+                                     ctypes.c_long)(("objc_msgSend", objc))
+        send_long_value = ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p,
+                                           ctypes.c_void_p)(
+                                               ("objc_msgSend", objc))
+        send_utf8 = ctypes.CFUNCTYPE(ctypes.c_char_p, ctypes.c_void_p,
+                                     ctypes.c_void_p)(("objc_msgSend", objc))
+        send_void = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)(
+            ("objc_msgSend", objc))
+        send_bool_value = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p,
+                                           ctypes.c_void_p)(("objc_msgSend", objc))
+        app = send_id(objc.objc_getClass(b"NSApplication"),
+                      sel("sharedApplication"))
+        windows = send_id(app, sel("windows"))
+        expected_number = int(root.winfo_id()) >> 32
+        for index in range(send_count(windows, sel("count"))):
+            native = send_index(windows, sel("objectAtIndex:"), index)
+            if not send_bool_value(native, sel("isVisible")):
+                continue
+            if send_long_value(native, sel("windowNumber")) != expected_number:
+                continue
+            send_long(native, sel("setLevel:"), 3 if enabled else 0)
+            if enabled and raise_windows:
+                send_void(native, sel("orderFrontRegardless"))
+    except (OSError, AttributeError, TypeError, tk.TclError):
         pass
 
 
@@ -149,18 +239,26 @@ def arguments() -> argparse.Namespace:
 
 
 class PyXLoad:
-    def __init__(self, root: tk.Tk, args: argparse.Namespace) -> None:
+    def __init__(self, root: tk.Toplevel, args: argparse.Namespace,
+                 manager: "PyXLoadApp") -> None:
         self.root = root
         self.args = args
+        self.manager = manager
         self.samples: deque[float] = deque(maxlen=args.history)
         self.scale = args.scale
         self.max_value = 0.0
+        self.cpu_count = max(os.cpu_count() or 1, 1)
         self.after_id: str | None = None
         self.last_gpu_error: str | None = None
         self.state_file = STATE_DIR / f"state-{args.source}.json"
         self.drag_origin: tuple[int, int, int, int] | None = None
+        self.display_key = display_signature()
+        self.display_monitor_id: str | None = None
+        self.pointer_monitor_id: str | None = None
+        self.right_button_was_down = False
+        self.last_menu_time = 0.0
 
-        root.title(APP_NAME)
+        root.title(f"{APP_NAME} {args.source}")
         root.minsize(100, 60)
         if not args.window_frame:
             root.withdraw()
@@ -197,21 +295,27 @@ class PyXLoad:
         root.bind("<Escape>", lambda _event: self.quit())
 
         self.menu = tk.Menu(root, tearoff=False)
-        self.floating_var = tk.BooleanVar(value=not args.not_floating)
-        self.menu.add_checkbutton(label="Toujours au-dessus",
-                                  variable=self.floating_var,
-                                  command=self.toggle_floating)
-        self.menu.add_command(label="Réinitialiser l’échelle",
+        self.gpu_var = tk.BooleanVar(value=manager.gpu_enabled)
+        self.menu.add_checkbutton(label="GPU widget", variable=self.gpu_var,
+                                  command=lambda: manager.set_gpu_enabled(
+                                      self.gpu_var.get()))
+        self.menu.add_command(label="Reset scale",
                               command=self.reset_scale)
         self.menu.add_separator()
-        self.menu.add_command(label="Quitter", command=self.quit,
+        self.floating_var = tk.BooleanVar(value=not args.not_floating)
+        self.menu.add_checkbutton(label="Always on top",
+                                  variable=self.floating_var,
+                                  command=self.toggle_floating)
+        self.menu.add_separator()
+        self.menu.add_command(label="Quit PyXLoad", command=manager.quit,
                               accelerator="⌘Q")
 
-        signal.signal(signal.SIGTERM, lambda *_unused: self.quit())
         if not args.window_frame:
             root.after_idle(self.show_borderless)
         # Xaw StripChart schedules its first acquisition after one period.
         self.after_id = self.root.after(round(args.update * 1000), self.sample)
+        self.display_monitor_id = root.after(2000, self.monitor_displays)
+        self.pointer_monitor_id = root.after(50, self.monitor_pointer)
 
     def show_borderless(self) -> None:
         """Map the Aqua window, then enforce borderless mode once more."""
@@ -226,11 +330,15 @@ class PyXLoad:
         self.root.tk.call("wm", "overrideredirect", self.root._w, 1)
         make_macos_windows_square()
         self.root.attributes("-topmost", not self.args.not_floating)
+        set_native_floating(self.root, not self.args.not_floating)
         self.root.lift()
 
     def load_geometry(self) -> str | None:
         try:
             value = json.loads(self.state_file.read_text(encoding="utf-8"))
+            geometry = value.get("display_geometries", {}).get(self.display_key)
+            if geometry:
+                return geometry
             return value.get("geometry")
         except (OSError, ValueError, TypeError):
             return None
@@ -238,15 +346,35 @@ class PyXLoad:
     def save_geometry(self) -> None:
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                value = json.loads(self.state_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                value = {}
+            value.setdefault("display_geometries", {})[self.display_key] = \
+                self.root.geometry()
+            value["geometry"] = self.root.geometry()
             self.state_file.write_text(
-                json.dumps({"geometry": self.root.geometry()}),
+                json.dumps(value, indent=2),
                 encoding="utf-8",
             )
         except OSError:
             pass
 
+    def monitor_displays(self) -> None:
+        new_key = display_signature()
+        if new_key != self.display_key:
+            self.display_key = new_key
+            try:
+                value = json.loads(self.state_file.read_text(encoding="utf-8"))
+                geometry = value.get("display_geometries", {}).get(new_key)
+                if geometry:
+                    self.root.geometry(geometry)
+            except (OSError, ValueError, TypeError):
+                pass
+        self.display_monitor_id = self.root.after(2000, self.monitor_displays)
+
     def toggle_floating(self) -> None:
-        self.root.attributes("-topmost", self.floating_var.get())
+        self.manager.set_floating(self.floating_var.get())
 
     def reset_scale(self) -> None:
         self.scale = self.args.scale
@@ -259,9 +387,36 @@ class PyXLoad:
         self.draw()
 
     def show_menu(self, event: tk.Event) -> None:
-        self.menu.tk_popup(event.x_root, event.y_root)
+        self.show_menu_at(event.x_root, event.y_root)
+
+    def show_menu_at(self, x: int, y: int) -> None:
+        now = time.monotonic()
+        if now - self.last_menu_time < 0.5:
+            return
+        self.last_menu_time = now
+        activate_macos_app()
+        self.root.lift()
+        self.menu.tk_popup(x, y)
+
+    def monitor_pointer(self) -> None:
+        try:
+            x, y = self.root.winfo_pointerxy()
+            inside = (self.root.winfo_rootx() <= x <
+                      self.root.winfo_rootx() + self.root.winfo_width() and
+                      self.root.winfo_rooty() <= y <
+                      self.root.winfo_rooty() + self.root.winfo_height())
+            down = right_mouse_down()
+            if inside and down and not self.right_button_was_down:
+                self.show_menu_at(x, y)
+            self.right_button_was_down = down
+            self.pointer_monitor_id = self.root.after(50, self.monitor_pointer)
+        except tk.TclError:
+            self.pointer_monitor_id = None
 
     def start_drag(self, event: tk.Event) -> None:
+        if self.floating_var.get():
+            self.root.attributes("-topmost", True)
+            set_native_floating(self.root, True)
         self.drag_origin = (
             event.x_root, event.y_root, self.root.winfo_x(), self.root.winfo_y()
         )
@@ -276,6 +431,8 @@ class PyXLoad:
 
     def stop_drag(self, _event: tk.Event) -> None:
         self.drag_origin = None
+        if self.floating_var.get():
+            set_native_floating(self.root, True)
         self.save_geometry()
 
     def sample(self) -> None:
@@ -411,6 +568,17 @@ class PyXLoad:
             # StripChart.c deliberately uses integer division here.
             y = graph_top + part * (graph_height // scale)
             canvas.create_line(0, y, width, y, fill=self.args.highlight)
+        if self.args.source == "load":
+            # Emphasize whole-machine saturation: on a 16-core Mac, load 16
+            # means an average of one runnable task per core. Repeat at 32,
+            # 48, ... when the dynamic XLoad scale grows that far.
+            threshold = self.cpu_count
+            while threshold <= display_max:
+                y = round(graph_bottom -
+                          graph_height * threshold / display_max)
+                canvas.create_line(0, y, width, y,
+                                   fill=self.args.highlight, width=1.5)
+                threshold += self.cpu_count
         if not self.args.no_label:
             canvas.create_text(4, 3, anchor="nw", fill=self.args.foreground,
                                font=self.display_font, text=self.args.label)
@@ -438,19 +606,117 @@ class PyXLoad:
                                fill=self.args.highlight, font=("Menlo", 8),
                                width=max(width - 10, 20), text="GPU indisponible")
 
-    def quit(self) -> None:
+    def shutdown(self) -> None:
         if self.after_id is not None:
             self.root.after_cancel(self.after_id)
             self.after_id = None
+        if self.display_monitor_id is not None:
+            self.root.after_cancel(self.display_monitor_id)
+            self.display_monitor_id = None
+        if self.pointer_monitor_id is not None:
+            self.root.after_cancel(self.pointer_monitor_id)
+            self.pointer_monitor_id = None
         self.save_geometry()
         self.root.destroy()
+
+    def quit(self) -> None:
+        self.manager.quit()
+
+
+class PyXLoadApp:
+    """One accessory application containing the CPU and optional GPU widgets."""
+    def __init__(self, root: tk.Tk, args: argparse.Namespace) -> None:
+        self.root, self.args = root, args
+        self.widgets: dict[str, PyXLoad] = {}
+        self.floating_enabled = not args.not_floating
+        self.floating_monitor_id: str | None = None
+        root.withdraw()
+        self.gpu_enabled = self.load_gpu_enabled()
+        signal.signal(signal.SIGTERM, lambda *_unused: self.quit())
+        root.bind_all("<Command-q>", lambda _event: self.quit())
+        self.create_widget("load")
+        if self.gpu_enabled:
+            self.create_widget("gpu")
+        self.floating_monitor_id = root.after(500, self.enforce_floating)
+        root.after(750, lambda: self.set_floating(self.floating_enabled))
+
+    def load_gpu_enabled(self) -> bool:
+        try:
+            return bool(json.loads(SETTINGS_FILE.read_text(
+                encoding="utf-8")).get("gpu_enabled"))
+        except (OSError, ValueError, TypeError):
+            # Preserve the former two-process installation on first upgrade.
+            return (STATE_DIR / "state-gpu.json").exists()
+
+    def save_settings(self) -> None:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        SETTINGS_FILE.write_text(json.dumps({
+            "gpu_enabled": self.gpu_enabled}, indent=2), encoding="utf-8")
+
+    def widget_args(self, source: str) -> argparse.Namespace:
+        args = copy.copy(self.args)
+        args.source = source
+        if source == "gpu":
+            args.geometry = "150x100+1640+260"
+            args.label = f"{self.args.label} GPU"
+        return args
+
+    def create_widget(self, source: str) -> None:
+        if source in self.widgets:
+            return
+        window = tk.Toplevel(self.root)
+        self.widgets[source] = PyXLoad(
+            window, self.widget_args(source), self)
+        window.after(750, lambda: self.set_floating(self.floating_enabled))
+
+    def set_gpu_enabled(self, enabled: bool) -> None:
+        self.gpu_enabled = bool(enabled)
+        if self.gpu_enabled:
+            self.create_widget("gpu")
+        elif "gpu" in self.widgets:
+            self.widgets.pop("gpu").shutdown()
+        for widget in self.widgets.values():
+            widget.gpu_var.set(self.gpu_enabled)
+        self.save_settings()
+
+    def set_floating(self, enabled: bool) -> None:
+        self.floating_enabled = enabled
+        self.args.not_floating = not enabled
+        for widget in self.widgets.values():
+            widget.floating_var.set(enabled)
+            widget.args.not_floating = not enabled
+            widget.root.attributes("-topmost", enabled)
+        for widget in self.widgets.values():
+            set_native_floating(widget.root, enabled)
+
+    def enforce_floating(self) -> None:
+        for widget in self.widgets.values():
+            set_native_floating(widget.root, self.floating_enabled,
+                                raise_windows=False)
+        self.floating_monitor_id = self.root.after(1000,
+                                                   self.enforce_floating)
+
+    def quit(self) -> None:
+        if self.floating_monitor_id is not None:
+            self.root.after_cancel(self.floating_monitor_id)
+            self.floating_monitor_id = None
+        for widget in list(self.widgets.values()):
+            try:
+                widget.shutdown()
+            except tk.TclError:
+                pass
+        self.widgets.clear()
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
 
 
 def main() -> None:
     args = arguments()
     root = tk.Tk()
     use_macos_accessory_mode()
-    PyXLoad(root, args)
+    PyXLoadApp(root, args)
     root.mainloop()
 
 
