@@ -33,6 +33,10 @@ done
 LABEL="com.page.pyxload"
 AGENT="$HOME/Library/LaunchAgents/$LABEL.plist"
 launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
+for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1 || break
+    sleep 0.1
+done
 plutil -create xml1 "$AGENT"
 plutil -insert Label -string "$LABEL" "$AGENT"
 plutil -insert ProgramArguments -xml "<array><string>$APP_DIR/python-launcher</string><string>$APP_DIR/pyxload.py</string><string>-geometry</string><string>150x100+1640+154</string><string>-fn</string><string>FixedRegular</string><string>--font-size</string><string>16</string><string>-update</string><string>3</string><string>-hl</string><string>magenta</string><string>-bg</string><string>black</string><string>-fg</string><string>white</string><string>-label</string><string>kamari</string></array>" "$AGENT"
@@ -42,7 +46,11 @@ plutil -insert ProcessType -string Interactive "$AGENT"
 plutil -insert StandardOutPath -string "$HOME/Library/Logs/PyXLoad.log" "$AGENT"
 plutil -insert StandardErrorPath -string "$HOME/Library/Logs/PyXLoad.log" "$AGENT"
 plutil -lint "$AGENT"
-launchctl bootstrap "gui/$UID" "$AGENT"
+if ! launchctl bootstrap "gui/$UID" "$AGENT"; then
+    launchctl bootout "gui/$UID" "$AGENT" 2>/dev/null || true
+    sleep 1
+    launchctl bootstrap "gui/$UID" "$AGENT"
+fi
 launchctl kickstart -k "gui/$UID/$LABEL"
 
 echo

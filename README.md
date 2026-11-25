@@ -1,7 +1,7 @@
 # PyXLoad for macOS
 
 A faithful, borderless `xload` clone for macOS, written in Python. PyXLoad
-displays the one-minute CPU load average in an always-on-top floating window
+displays the one-minute CPU load average in a normal-level window
 and adds an optional Apple Silicon GPU graph.
 
 It preserves the behaviour of the Xaw `StripChart` behind the original
@@ -12,7 +12,7 @@ scale intervals, dynamic scaling and `jumpScroll` overflow.
 
 - CPU load graph faithful to `xload` and Xaw `StripChart`
 - optional Apple Silicon GPU utilisation widget, without `sudo`
-- borderless, square-cornered floating windows
+- borderless windows; click to raise, right-click or Control-click for options
 - no Dock or Command-Tab icon
 - draggable from anywhere in the graph
 - runs CPU and GPU widgets inside one application
@@ -96,7 +96,7 @@ PyXLoad reproduces:
   48 on a 16-core Mac), marking one, two, or more runnable tasks per core
 - a label area separate from the chart, so the graph cannot cover its text
 
-Intentional macOS additions are the native floating window, contextual menu,
+Intentional macOS additions are the borderless window, contextual menu,
 saved position, optional unfilled trace and GPU source. The obsolete X11
 `-remote`/rwhod and keyboard-LED `-lights` modes are not implemented.
 

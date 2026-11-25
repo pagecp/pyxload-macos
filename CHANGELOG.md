@@ -2,6 +2,48 @@
 
 All notable changes to PyXLoad are documented here.
 
+## 1.1.21 — 2026-11-25
+
+- Request an explicit borderless Aqua window style on Tk 9 and Tk 8.6.
++
+## 1.1.20 — 2026-11-25
+
+- Use managed windows at normal stacking level. Click to raise; other apps can
+  cover the widgets. Remove full-screen polling and global mouse polling.
+
+## 1.1.19 — 2026-11-25
+
+- Hide and restore native AppKit windows without withdrawing or remapping Tk,
+  preserving clicks, dragging and context menus.
+
+## 1.1.18 — 2026-11-25
+
+- Detect a frontmost full-screen application and explicitly hide CPU and GPU
+  widgets until the normal desktop becomes active again.
+
+## 1.1.17 — 2026-10-12
+
+- Let AppKit alone manage floating window levels so widgets stay out of other
+  applications' full-screen Spaces.
+
+## 1.1.16 — 2026-07-26
+
+- Use macOS `FullScreenPrimary`, rather than the misinterpreted
+  `FullScreenNone`, to keep CPU and GPU on ordinary desktop Spaces and out of
+  other applications' full-screen Spaces.
+
+## 1.1.15 — 2026-07-26
+
+- Combine macOS `Managed` and `FullScreenNone` collection behaviours so CPU
+  and GPU remain visible in ordinary Spaces but not over full-screen apps.
+- Make upgrades wait for the previous LaunchAgent to unload and retry
+  bootstrap once, preventing transient launchctl error 5.
+
+## 1.1.14 — 2026-07-26
+
+- Keep CPU and GPU widgets out of macOS full-screen application Spaces while
+  preserving Always on top in ordinary Spaces.
+
 ## 1.1.13 — 2026-07-23
 
 - Draw logical-core saturation references at 1.5 px rather than 2 px.
